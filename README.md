@@ -6,7 +6,9 @@ This repository contains final group project materials of STA457 Winter 2025 rel
 - Package Requirement: rugarch, fGarch, dplyr, astsa, lubridate, forecast, tseries, tidyverse
 
 ## Files
-
+- Daily Prices_ICCO.csv: The times series data of cocoa future price between 1994 and 2025
+- processed_monthly_prices_data.csv: Price data from Daily Prices_ICCO.csv that has been cleaned and converted into monthly average
+- Ghana_data.csv: Historical data of precipitation and temperature in Ghana.
 ## Running the code
 
 ## Group Member
