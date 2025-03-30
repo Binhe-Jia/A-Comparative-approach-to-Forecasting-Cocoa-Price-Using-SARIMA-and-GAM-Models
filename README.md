@@ -8,3 +8,8 @@ This repository contains final group project materials of STA457 Winter 2025 rel
 ## Files
 
 ## Running the code
+
+## Group Member
+- Binhe Jia
+- Peize Zhang
+- 
