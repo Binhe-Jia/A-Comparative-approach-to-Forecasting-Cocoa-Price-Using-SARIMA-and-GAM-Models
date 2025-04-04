@@ -14,4 +14,5 @@ This repository contains final group project materials of STA457 Winter 2025 rel
 ## Group Member
 - Binhe Jia
 - Peize Zhang
-- 
+- Jinting Liu
+- Haoyuan Chen
