@@ -1,0 +1,715 @@
+---
+title: "457 final proj"
+author: "Peize Zhang"
+date: "2025-03-20"
+output:
+  pdf_document:
+    latex_engine: xelatex
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(lubridate)
+library('glmmTMB')
+library(mgcv)
+library(patchwork)
+library(tidyr)
+library(lubridate)
+library(zoo)
+library(stringr)
+library(purrr)
+library(ggplot2)
+library(kableExtra)
+library(knitr)
+```
+
+```{r load dataset}
+file_address_price = 'Daily Prices_ICCO.csv'
+original_price_data = read.csv(file_address_price)
+file_address_weather = 'Ghana_data.csv'
+original_weather_data = read.csv(file_address_weather)
+file_address_exchange_rate = 'API_PA.NUS.FCRF_DS2_en_csv_v2_13510.csv'
+original_exchange_rate_data = read.csv(file_address_exchange_rate)
+
+
+```
+
+```{r}
+
+if (is.character(original_price_data$Date)) {
+  original_price_data$Date <- dmy(original_price_data$Date)
+}
+original_price_data$Price <- as.numeric(gsub(",", "", original_price_data$ICCO.daily.price..US..tonne.))
+monthly_price_data <- original_price_data %>%
+  filter(!is.na(Price)) %>%
+  mutate(YearMonth = floor_date(Date, "month")) %>%
+  group_by(YearMonth) %>%
+  summarise(Average_Price = mean(Price, na.rm = TRUE))
+plot(monthly_price_data$YearMonth, monthly_price_data$Average_Price, type = "l",
+     xlab = "Month", ylab = "Average Price", main = "Monthly Average Price Trend")
+```
+
+```{r}
+original_weather_data$DATE <- ymd(original_weather_data$DATE)
+
+weather_data <- original_weather_data %>%
+  filter(DATE >= as.Date("1994-10-01") & DATE <= as.Date("2025-02-01"))
+
+weather_data$PRCP <- ifelse(is.na(weather_data$PRCP), 0, weather_data$PRCP)
+
+weather_data <- weather_data %>%
+  arrange(DATE) %>%
+  mutate(
+    TAVG = zoo::na.approx(TAVG, na.rm = FALSE),
+    TAVG = zoo::na.locf(TAVG, na.rm = FALSE),
+    TAVG = zoo::na.locf(TAVG, fromLast = TRUE)
+  )
+
+
+full_dates <- data.frame(DATE = seq(as.Date("1994-10-01"), as.Date("2025-02-01"), by = "day"))
+weather_data <- full_join(full_dates, weather_data, by = "DATE") %>%
+  arrange(DATE)
+
+fill_date <- as.Date("2024-11-28")
+fill_value <- weather_data$TAVG[weather_data$DATE == fill_date]
+weather_data$TAVG[weather_data$DATE %in% as.Date(c("2024-11-29", "2024-11-30"))] <- fill_value
+
+replace_missing_month <- function(target_year, target_month) {
+  ref_year <- target_year - 1
+  target_days <- seq(as.Date(sprintf("%d-%02d-01", target_year, target_month)),
+                     as.Date(sprintf("%d-%02d-01", target_year, target_month)) %m+% months(1) - days(1), by = "day")
+  ref_days <- seq(as.Date(sprintf("%d-%02d-01", ref_year, target_month)),
+                  as.Date(sprintf("%d-%02d-01", ref_year, target_month)) %m+% months(1) - days(1), by = "day")
+
+  ref_avg_tavg <- mean(weather_data$TAVG[weather_data$DATE %in% ref_days], na.rm = TRUE)
+  ref_total_prcp <- sum(weather_data$PRCP[weather_data$DATE %in% ref_days], na.rm = TRUE)
+
+  weather_data$TAVG[weather_data$DATE %in% target_days] <<- rep(ref_avg_tavg, length(target_days))
+  weather_data$PRCP[weather_data$DATE %in% target_days] <<- rep(ref_total_prcp / length(target_days), length(target_days))
+}
+
+replace_missing_month(2024, 12)
+replace_missing_month(2025, 1)
+replace_missing_month(2025, 2)
+
+monthly_weather_data <- weather_data %>%
+  mutate(YearMonth = floor_date(DATE, "month")) %>%
+  group_by(YearMonth) %>%
+  summarise(
+    Monthly_PRCP = sum(PRCP, na.rm = TRUE),
+    Monthly_TAVG = if (all(is.na(TAVG))) NA_real_ else mean(TAVG, na.rm = TRUE)
+  )
+
+na_index <- which(is.na(monthly_weather_data$Monthly_TAVG))
+
+for (i in na_index) {
+  if (i > 1 && i < nrow(monthly_weather_data)) {
+    prev_val <- monthly_weather_data$Monthly_TAVG[i - 1]
+    next_val <- monthly_weather_data$Monthly_TAVG[i + 1]
+
+    if (!is.na(prev_val) && !is.na(next_val)) {
+      monthly_weather_data$Monthly_TAVG[i] <- mean(c(prev_val, next_val))
+    } else if (!is.na(prev_val)) {
+      monthly_weather_data$Monthly_TAVG[i] <- prev_val
+    } else if (!is.na(next_val)) {
+      monthly_weather_data$Monthly_TAVG[i] <- next_val
+    }
+  }
+}
+
+monthly_weather_data$Monthly_PRCP[monthly_weather_data$YearMonth == as.Date("2025-02-01")] <- monthly_weather_data$Monthly_PRCP[monthly_weather_data$YearMonth == as.Date("2024-02-01")]
+```
+
+```{r}
+exchange_raw <- read.csv("API_PA.NUS.FCRF_DS2_en_csv_v2_13510.csv", skip = 4)
+
+ghana_exchange <- exchange_raw %>%
+  filter(Country.Name == "Ghana") %>%
+  pivot_longer(cols = matches("^X\\d{4}"), names_to = "Year", values_to = "Exchange_Rate") %>%
+  mutate(
+    Year = as.integer(str_remove(Year, "^X")),
+    Exchange_Rate = as.numeric(Exchange_Rate)
+  ) %>%
+  filter(!is.na(Exchange_Rate))
+
+monthly_exchange_ghana <- ghana_exchange %>%
+  mutate(
+    Month = map(Year, ~ seq(ymd(paste0(.x, "-01-01")), ymd(paste0(.x, "-12-01")), by = "month"))
+  ) %>%
+  unnest(Month) %>%
+  dplyr::select(Date = Month, Exchange_Rate)
+
+monthly_exchange_ghana <- monthly_exchange_ghana %>%
+  filter(Date >= ymd("1994-10-01") & Date <= ymd("2023-12-01"))
+
+supplement_exchange <- tibble(
+  Date = seq(ymd("2024-01-01"), ymd("2025-02-01"), by = "month"),
+  Exchange_Rate = c(
+    11.97, 12.35, 12.64, 13.2, 13.7, 14.75, 15.33, 15.5,
+    15.65, 15.79, 16.3, 15.3, 14.65, 15.27
+  )
+)
+
+final_monthly_exchange <- bind_rows(monthly_exchange_ghana, supplement_exchange) %>%
+  arrange(Date)
+
+head(final_monthly_exchange)
+tail(final_monthly_exchange)
+```
+
+```{r}
+if ("Date" %in% colnames(final_monthly_exchange)) {
+  final_monthly_exchange <- final_monthly_exchange %>%
+    rename(YearMonth = Date)
+}
+monthly_exchange_rate_data <- final_monthly_exchange
+monthly_combined_data <- monthly_price_data %>%
+  left_join(monthly_weather_data, by = "YearMonth") %>%
+  left_join(monthly_exchange_rate_data, by = "YearMonth")
+```
+
+```{r}
+monthly_combined_data <- monthly_combined_data %>%
+  mutate(dateint = (year(YearMonth) - min(year(YearMonth))) * 12 + month(YearMonth)) %>%
+  mutate(dateint = dateint - min(dateint) + 1) 
+
+train_data <- monthly_combined_data[1:362, ]
+print(train_data)
+test_data <- monthly_combined_data[(nrow(monthly_price_data) - 2):nrow(monthly_price_data), ]
+```
+
+
+
+```{r}
+k_value_dateint = 10
+```
+
+
+```{r}
+gam_reml_full <- gam(Average_Price ~ s(dateint, k= k_value_dateint) + s(Monthly_PRCP) + 
+                  s(Monthly_TAVG) + s(Exchange_Rate), 
+                data=train_data, family=Gamma(link="log"), method="REML")
+
+test_data$predicted <- predict(gam_reml_full, newdata = test_data, type = "response")
+
+
+summary(gam_reml_full)
+```
+
+```{r}
+pred_result <- predict(gam_reml_full, newdata = monthly_combined_data, type = "response", se.fit = TRUE)
+
+monthly_combined_data$predicted <- pred_result$fit
+monthly_combined_data$se <- pred_result$se.fit
+
+monthly_combined_data <- monthly_combined_data %>%
+  mutate(
+    lower = predicted - 1.96 * se,
+    upper = predicted + 1.96 * se
+  )
+
+pic_1 <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+
+  geom_line(aes(y = lower), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper), color = "red", linetype = "dashed", size = 0.5) +
+
+  geom_line(aes(y = predicted), color = "blue", size = 1) +
+
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+
+  labs(#title = "GAM Model: Average Price Prediction",
+       y = "Monthly Average Price",
+       x = "Month") +
+  theme_minimal()
+```
+
+```{r}
+pic_1_zoom <-ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  
+  geom_line(aes(y = lower), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper), color = "red", linetype = "dashed", size = 0.5) +
+  
+  geom_line(aes(y = predicted), color = "blue", size = 1) +
+  
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  
+  coord_cartesian(xlim = as.Date(c("2024-07-01", "2025-02-01"))) +
+  
+  labs(# title = "Zoomed GAM Forecast (2024-07 to 2025-02)",
+       y = "Monthly Average Price",
+       x = "Month") +
+  theme_minimal()
+```
+
+```{r}
+mse <- mean((test_data$Average_Price - test_data$predicted)^2)
+
+rmse <- sqrt(mse)
+
+cat("MSE:", round(mse, 2), "\n")
+cat("RMSE:", round(rmse, 2), "\n")
+```
+
+###################################################################################### 
+
+###################################################################################### 
+
+###################################################################################### 
+
+```{r}
+gam_reml_fx <- gam(Average_Price ~ s(dateint, k = k_value_dateint) + Monthly_PRCP + 
+                  Monthly_TAVG + s(Exchange_Rate), 
+                data=train_data, family=Gamma(link="log"), method="REML")
+
+test_data$predicted_fx <- predict(gam_reml_fx, newdata = test_data, type = "response")
+
+summary(gam_reml_fx)
+```
+
+```{r}
+pred_fx <- predict(gam_reml_fx, newdata = monthly_combined_data, type = "response", se.fit = TRUE)
+
+monthly_combined_data$predicted_fx <- pred_fx$fit
+monthly_combined_data$se_fx <- pred_fx$se.fit
+
+monthly_combined_data <- monthly_combined_data %>%
+  mutate(
+    lower_fx = predicted_fx - 1.96 * se_fx,
+    upper_fx = predicted_fx + 1.96 * se_fx
+  )
+```
+
+```{r}
+pic_2 <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  geom_line(aes(y = lower_fx), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_fx), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = predicted_fx), color = "blue", size = 1) +
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  labs(
+    # title = "GAM Forecast with Exchange Rate, Weather: Full Time Range",
+    y = "Monthly Average Price",
+    x = "Month"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+pic_2_zoom <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  geom_line(aes(y = lower_fx), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_fx), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = predicted_fx), color = "blue", size = 1) +
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  coord_cartesian(xlim = as.Date(c("2024-07-01", "2025-02-01"))) +
+  labs(
+    # title = "GAM Forecast with Exchange Rate & Weather (Zoomed: Jul 2024 – Feb 2025)",
+    y = "Monthly Average Price",
+    x = "Month"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+mse_fx <- mean((test_data$Average_Price - test_data$predicted_fx)^2)
+rmse_fx <- sqrt(mse_fx)
+
+cat("MSE_fx:", round(mse_fx, 2), "\n")
+cat("RMSE_fx:", round(rmse_fx, 2), "\n")
+```
+
+###################################################################################### 
+
+###################################################################################### 
+
+###################################################################################### 
+
+```{r}
+gam_reml_exc <- gam(Average_Price ~ s(dateint, k = k_value_dateint) +  s(Exchange_Rate), 
+                data=train_data, family=Gamma(link="log"), method="REML")
+
+test_data$predicted2 <- predict(gam_reml_exc, newdata = test_data, type = "response")
+
+
+summary(gam_reml_exc)
+```
+
+```{r}
+pred_exc <- predict(gam_reml_exc, newdata = monthly_combined_data, type = "response", se.fit = TRUE)
+
+monthly_combined_data$predicted_exc <- pred_exc$fit
+monthly_combined_data$se_exc <- pred_exc$se.fit
+
+monthly_combined_data <- monthly_combined_data %>%
+  mutate(
+    lower_exc = predicted_exc - 1.96 * se_exc,
+    upper_exc = predicted_exc + 1.96 * se_exc
+  )
+
+
+pic_3 <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  
+  geom_line(aes(y = lower_exc), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_exc), color = "red", linetype = "dashed", size = 0.5) +
+  
+  geom_line(aes(y = predicted_exc), color = "blue", size = 1) +
+  
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  
+  labs(# title = "GAM Model with Exchange Rate: Full Time Range",
+       y = "Monthly Average Price",
+       x = "Month") +
+  theme_minimal()
+```
+
+```{r}
+pic_3_zoom <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  
+  geom_line(aes(y = lower_exc), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_exc), color = "red", linetype = "dashed", size = 0.5) +
+  
+  geom_line(aes(y = predicted_exc), color = "blue", size = 1) +
+  
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  
+  coord_cartesian(xlim = as.Date(c("2024-07-01", "2025-02-01"))) +
+  
+  labs(# title = "GAM Forecast with Exchange Rate (Zoomed: Jul 2024 – Feb 2025)",
+       y = "Monthly Average Price",
+       x = "Month") +
+  theme_minimal()
+```
+
+```{r}
+mse_2 <- mean((test_data$Average_Price - test_data$predicted2)^2)
+
+rmse_2 <- sqrt(mse_2)
+
+cat("MSE_2:", round(mse_2, 2), "\n")
+cat("RMSE_2:", round(rmse_2, 2), "\n")
+```
+
+###################################################################################### 
+
+###################################################################################### 
+
+###################################################################################### 
+
+```{r}
+gam_reml_reduce <- gam(Average_Price ~ s(dateint, k =k_value_dateint), 
+                data=train_data, family=Gamma(link="log"), method="REML")
+
+
+test_data$predicted_reduce <- predict(gam_reml_reduce, newdata = test_data, type = "response")
+
+
+summary(gam_reml_reduce)
+```
+
+```{r}
+pred_redu <- predict(gam_reml_reduce, newdata = monthly_combined_data, type = "response", se.fit = TRUE)
+
+monthly_combined_data$predicted_reduce <- pred_redu$fit
+monthly_combined_data$se_reduce <- pred_redu$se.fit
+
+monthly_combined_data <- monthly_combined_data %>%
+  mutate(
+    lower_reduce = predicted_reduce - 1.96 * se_reduce,
+    upper_reduce = predicted_reduce + 1.96 * se_reduce
+  )
+```
+
+```{r}
+pic_4 <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  geom_line(aes(y = lower_reduce), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_reduce), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = predicted_reduce), color = "blue", size = 1) +
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  labs(
+    # title = "GAM Forecast with Exchange Rate, Weather: Full Time Range",
+    y = "Monthly Average Price",
+    x = "Month"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+pic_4_zoom <- ggplot(monthly_combined_data, aes(x = YearMonth)) +
+  geom_line(aes(y = lower_reduce), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = upper_reduce), color = "red", linetype = "dashed", size = 0.5) +
+  geom_line(aes(y = predicted_reduce), color = "blue", size = 1) +
+  geom_point(data = train_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", shape = 1, size = 1) +
+  geom_point(data = test_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "red", shape = 1, size = 2.5) +
+  coord_cartesian(xlim = as.Date(c("2024-07-01", "2025-02-01"))) +
+  labs(
+    # title = "GAM Forecast with Time (Zoomed: Jul 2024 – Feb 2025)",
+    y = "Monthly Average Price",
+    x = "Month"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+mse_reduce <- mean((test_data$Average_Price - test_data$predicted_reduce)^2)
+rmse_reduce <- sqrt(mse_reduce)
+
+cat("MSE_reduce:", round(mse_reduce, 2), "\n")
+cat("RMSE_reduce:", round(rmse_reduce, 2), "\n")
+```
+
+###################################################################################### 
+
+###################################################################################### 
+
+###################################################################################### 
+
+```{r}
+AIC(gam_reml_full, gam_reml_fx, gam_reml_exc,gam_reml_reduce)
+```
+
+```{r}
+mse_reml <- mean((test_data$Average_Price - test_data$predicted)^2)
+rmse_reml <- sqrt(mse_reml)
+
+mse_fx <- mean((test_data$Average_Price - test_data$predicted_fx)^2)
+rmse_fx <- sqrt(mse_fx)
+
+mse_exc <- mean((test_data$Average_Price - test_data$predicted2)^2)
+rmse_exc <- sqrt(mse_exc)
+
+mse_reduce <- mean((test_data$Average_Price - test_data$predicted_reduce)^2)
+rmse_reduce <- sqrt(mse_reduce)
+
+cat("MSE (reml):", round(mse_reml, 2), "\n")
+cat("RMSE (reml):", round(rmse_reml, 2), "\n\n")
+
+cat("MSE (fx):", round(mse_fx, 2), "\n")
+cat("RMSE (fx):", round(rmse_fx, 2), "\n\n")
+
+cat("MSE (exc):", round(mse_exc, 2), "\n")
+cat("RMSE (exc):", round(rmse_exc, 2), "\n\n")
+
+cat("MSE (reduce):", round(mse_reduce, 2), "\n")
+cat("RMSE (reduce):", round(rmse_reduce, 2), "\n")
+```
+
+```{r}
+###
+# picture
+###
+
+# pic_1
+# pic_2
+# pic_3
+# pic_4
+
+# pic_1_zoom
+# pic_2_zoom
+# pic_3_zoom
+# pic_4_zoom
+
+###
+# function
+###
+
+#gam_reml_full
+#gam_reml_fx
+#gam_reml_exc
+#gam_reml_reduce
+
+
+```
+
+```{r}
+(pic_1 + pic_1_zoom) / 
+(pic_2 + pic_2_zoom) 
+```
+
+```{r}
+(pic_3 + pic_3_zoom) / 
+(pic_4 + pic_4_zoom)
+```
+
+```{r}
+aic_values <- AIC(gam_reml_full, gam_reml_fx, gam_reml_exc, gam_reml_reduce)
+df_values <- sapply(list(gam_reml_full, gam_reml_fx, gam_reml_exc, gam_reml_reduce), 
+                   function(x) summary(x)$sp.criterion)  
+
+
+model_comparison <- data.frame(
+  Model = c("gam_reml_full", "gam_reml_fx", "gam_reml_exc", "gam_reml_reduce"),
+  REML = sapply(list(gam_reml_full, gam_reml_fx, gam_reml_exc, gam_reml_reduce), 
+                function(x) x$reml.scale),
+  Rsq_adj = sapply(list(gam_reml_full, gam_reml_fx, gam_reml_exc, gam_reml_reduce), 
+                   function(x) summary(x)$r.sq),
+  Deviance_explained = sapply(list(gam_reml_full, gam_reml_fx, gam_reml_exc, gam_reml_reduce), 
+                             function(x) summary(x)$dev.expl * 100),
+  Degree_of_freedom = aic_values$df,  
+  AIC = aic_values$AIC, 
+  MSE = c(mse_reml, mse_fx, mse_exc, mse_reduce),
+  RMSE = c(rmse_reml, rmse_fx, rmse_exc, rmse_reduce)
+  
+)
+
+
+library(knitr)
+kable(model_comparison, 
+      caption = "Comparison of GAM Models with REML Smoothness Selection",
+      digits = 4,
+      align = c('l', 'l', 'r', 'r', 'r', 'r', 'l', 'l', 'r'))
+```
+
+
+
+
+###################################
+
+
+
+```{r}
+
+last_date <- as.Date("2025-02-01")
+last_exchange_rate <- monthly_combined_data$Exchange_Rate[monthly_combined_data$YearMonth == last_date]
+last_dateint <- monthly_combined_data$dateint[monthly_combined_data$YearMonth == last_date]
+
+future_months <- 6
+future_dates <- seq(from = last_date %m+% months(1), by = "month", length.out = future_months)
+
+
+forecast_data_frame <- data.frame(
+  YearMonth = future_dates,
+  Exchange_Rate = rep(last_exchange_rate, future_months),
+  dateint = (last_dateint + 1):(last_dateint + future_months)
+)
+
+
+forecast_data_frame$Monthly_TAVG <- sapply(forecast_data_frame$YearMonth, function(date) {
+  prev_year_date <- date %m-% years(1)
+  monthly_combined_data$Monthly_TAVG[monthly_combined_data$YearMonth == prev_year_date]
+})
+
+forecast_data_frame$Monthly_PRCP <- sapply(forecast_data_frame$YearMonth, function(date) {
+  prev_year_date <- date %m-% years(1)
+  monthly_combined_data$Monthly_PRCP[monthly_combined_data$YearMonth == prev_year_date]
+})
+```
+
+
+```{r}
+
+prediction_result <- predict(gam_reml_exc,
+                             newdata = forecast_data_frame,
+                             type = "response",
+                             se.fit = TRUE)
+
+forecast_data_frame$fit <- prediction_result$fit
+forecast_data_frame$se  <- prediction_result$se.fit
+forecast_data_frame$lower <- forecast_data_frame$fit - 1.96 * forecast_data_frame$se
+forecast_data_frame$upper <- forecast_data_frame$fit + 1.96 * forecast_data_frame$se
+```
+
+
+```{r}
+
+test_plot_data <- monthly_combined_data %>%
+  filter(YearMonth >= as.Date("2024-01-01") & YearMonth <= as.Date("2025-02-01")) %>%
+  mutate(Source = "Actual")
+
+
+test_predicted <- predict(gam_reml_exc, newdata = test_plot_data, type = "response", se.fit = TRUE)
+test_plot_data$fit <- test_predicted$fit
+test_plot_data$se <- test_predicted$se.fit
+test_plot_data$lower <- test_plot_data$fit - 1.96 * test_plot_data$se
+test_plot_data$upper <- test_plot_data$fit + 1.96 * test_plot_data$se
+
+
+ggplot() +
+
+  geom_point(data = test_plot_data,
+             aes(x = YearMonth, y = Average_Price),
+             color = "black", size = 2) +
+
+
+  geom_line(data = test_plot_data,
+            aes(x = YearMonth, y = fit),
+            color = "#FFA6C9", linewidth = 1.2) +
+
+
+  geom_ribbon(data = test_plot_data,
+              aes(x = YearMonth, ymin = lower, ymax = upper),
+              fill = "#FFD9EC", alpha = 0.3) +
+
+  geom_point(data = forecast_data_frame,
+             aes(x = YearMonth, y = fit),
+             color = "#FF5C8A", size = 2) +
+
+
+  geom_line(data = forecast_data_frame,
+            aes(x = YearMonth, y = fit),
+            color = "#5C6AC4", linewidth = 1.2) +
+
+
+  geom_ribbon(data = forecast_data_frame,
+              aes(x = YearMonth, ymin = lower, ymax = upper),
+              fill = "#DDE3FF", alpha = 0.3, linetype = "dashed") +
+
+
+  scale_x_date(limits = c(as.Date("2024-01-01"), max(forecast_data_frame$YearMonth))) +
+
+
+  labs(x = "Month", y = "Monthly Average Price") +
+  theme_minimal(base_size = 13)
+```
+
+
+
+
+
+
+
