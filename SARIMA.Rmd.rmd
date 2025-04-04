@@ -1,8 +1,15 @@
 ---
-title: "457 Final Project SARIMA"
-author: "Group"
-date: "2025-04-03"
-output: html_document
+title: "STA457 Final Project: SARIMA vs GAM"
+author: "Group Members"
+date: "2025-04-04"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+    toc: true
+    number_sections: true
+    fig_caption: true
+fontsize: 11pt
+geometry: margin=1in
 ---
 
 ```{r setup, include=FALSE}
@@ -88,25 +95,25 @@ plot(test_time_p1, test_ts, type = "l", xlab = "Time", ylab = "Monthly Average P
 ```
 
 # ETS
-```{r ets, rmse = 2248.278, include = FALSE}
+```{r ets, include = FALSE}
 # fit ets model
-ets_model <- ets(train_ts, model = "AAA")
+#ets_model <- ets(train_ts, model = "AAA")
 
 # forecast
-ets_forecast <- forecast(ets_model, h = 3)
-accuracy(ets_forecast, test_ts)["Test set", "RMSE"]
-print(ets_forecast)
+#ets_forecast <- forecast(ets_model, h = 3)
+#accuracy(ets_forecast, test_ts)["Test set", "RMSE"]
+#print(ets_forecast)
 
 # plot
-plot(ets_forecast, main = "ETS Forecast vs. Test Data")
-lines(test_ts, col = "red", lwd = 2)
-legend("topleft", legend = c("Forecast", "Actual Data"), 
-       col = c("blue", "red"), lwd = 2)
+#plot(ets_forecast, main = "ETS Forecast vs. Test Data")
+#lines(test_ts, col = "red", lwd = 2)
+#legend("topleft", legend = c("Forecast", "Actual Data"), 
+      # col = c("blue", "red"), lwd = 2)
 ```
 
 
 # SARIMA
-```{r log, choose model visually}
+```{r log}
 adf.test(train_ts)
 # NEW: LOG
 new_train_ts = log(train_ts)
@@ -121,7 +128,7 @@ adf.test(log_ts_1)
 #pacf(new_train_ts, main = "Partial Autocorrelation Function", xlab = "Lag", ylab = "PACF", lag.max = 100)
 ```
 
-```{r diff, choose model visually}
+```{r diff}
 # plot after diff
 diff_1 = diff(new_train_ts)
 #diff_2 = diff(diff_1, 12)
@@ -190,7 +197,7 @@ sorted_model_aic_df <- model_aic_df[order(model_aic_df$AIC), ]
 head(sorted_model_aic_df, 20)
 ```
 
-```{r }
+```{r}
 # sarima model 1
 mod_1 <- Arima(new_train_ts, order = c(1,1,1), seasonal = list(order = c(0,0,0), period = 12))
 sarima(new_train_ts,1,1,1,0,0,0,12)
@@ -198,15 +205,15 @@ sarima(new_train_ts,1,1,1,0,0,0,12)
 # Forecast 3 obs
 forecast_1 <- forecast(mod_1, h = 3)
 
-# exp
+# exp1
 output_1 <- exp(forecast_1$mean)
 
-# RMSE
+# RMSE1
 rmse_value_1 <- accuracy(output_1, test_ts)["Test set", "RMSE"]
 print(rmse_value_1)
 ```
 
-```{r }
+```{r}
 # sarima model 2
 mod_2 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(0,0,0), period = 12))
 sarima(new_train_ts,0,1,1,0,0,0,12)
@@ -214,10 +221,10 @@ sarima(new_train_ts,0,1,1,0,0,0,12)
 # Forecast 3 obs
 forecast_2 <- forecast(mod_2, h = 3)
 
-# exp
+# exp2
 output_2 <- exp(forecast_2$mean)
 
-# RMSE
+# RMSE2
 rmse_value_2 <- accuracy(output_2, test_ts)["Test set", "RMSE"]
 print(rmse_value_2)
 ```
@@ -230,15 +237,15 @@ sarima(new_train_ts,1,1,0,0,0,0,12)
 # Forecast 3 obs
 forecast_3 <- forecast(mod_3, h = 3)
 
-# exp
+# exp3
 output_3 <- exp(forecast_3$mean)
 
-# RMSE
+# RMSE3
 rmse_value_3 <- accuracy(output_3, test_ts)["Test set", "RMSE"]
 print(rmse_value_3)
 ```
 
-```{r }
+```{r}
 # sarima model 4
 mod_4 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(0,0,1), period = 12))
 sarima(new_train_ts,0,1,1,0,0,1,12)
@@ -253,7 +260,8 @@ output_4 <- exp(forecast_4$mean)
 rmse_value_4 <- accuracy(output_4, test_ts)["Test set", "RMSE"]
 print(rmse_value_4)
 ```
-```{r }
+
+```{r}
 # sarima model 5
 mod_5 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(1,0,0), period = 12))
 sarima(new_train_ts,0,1,1,1,0,0,12)
@@ -270,10 +278,7 @@ print(rmse_value_5)
 ```
 
 
-```{r sarima forecast}
-# forecast
-#forecast_sarima <- forecast(mod_3, h = 12)
-
+```{r sarima f}
 logPrice = log(full_ts)
 #sari ma.for(logPrice,12, 1,1,0,0,0,0,12)
 sarima.for(logPrice,6, 1,1,0,0,0,0,12)
