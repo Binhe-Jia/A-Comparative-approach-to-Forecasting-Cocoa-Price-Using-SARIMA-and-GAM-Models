@@ -1,5 +1,5 @@
 # A-Comparative-approach-to-Forecasting-Cocoa-Price-Using-SARIMA-and-GAM-Models
-This repository contains final group project materials of STA457 Winter 2025 related to cocoa price modeling using ARIMA/SARIMA and GAM. 
+This repository contains final group project materials of STA457 Winter 2025 related to cocoa price modeling using ARIMA/SARIMA and GAM. Please open an issue in case of any difficulty running the R markdown files
 
 ## Detail
 - Programming Language: R
