@@ -16,7 +16,9 @@ This repository contains final group project materials of STA457 Winter 2025 rel
     - Change file_address_price to the location of Daily Prices_ICCO.csv.
     - Change file_address_weather to the location of Ghana_data.csv
     - Change file_address_exchange_rate to the location of API_PA.NUS.FCRF_DS2_en_csv_v2_13510.csv.
-- 
+- For SARIMA.Rmd.rmd:
+    - Change file_address_price to the location of Daily Prices_ICCO.csv.
+    - Change file_address_weather to the location of Ghana_data.csv.
 ## Group Member
 - Binhe Jia
 - Peize Zhang
