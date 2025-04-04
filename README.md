@@ -11,7 +11,11 @@ This repository contains final group project materials of STA457 Winter 2025 rel
 - API_PA.NUS.FCRF_DS2_en_csv_v2_13510.csv: Historical (annualized) exchange rate of currencies to USD between 1960 and 2023
 - 457_clean_version_forcast2.Rmd.rmd: R-markdown file containing our R code for the GAM file.
 ## Running the code
-- For 457_clean_version_forcast2.Rmd.rmd: Change file_address_price to the location of Daily Prices_ICCO.csv. Make sure that all libraries are installed properly.
+- Make sure that all libraries are installed properly.
+- For 457_clean_version_forcast2.Rmd.rmd:
+    - Change file_address_price to the location of Daily Prices_ICCO.csv.
+    - Change file_address_weather to the location of Ghana_data.csv
+    - Change file_address_exchange_rate to the location of API_PA.NUS.FCRF_DS2_en_csv_v2_13510.csv.
 - 
 ## Group Member
 - Binhe Jia
