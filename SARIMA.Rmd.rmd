@@ -1,0 +1,321 @@
+---
+title: "457 Final Project SARIMA"
+author: "Group"
+date: "2025-04-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r library}
+#install.packages("fGarch")   
+#install.packages("rugarch")
+library(rugarch)
+library(fGarch)       
+library(dplyr)
+library(astsa)
+library(lubridate)
+library(forecast)
+library(tseries)
+library(tidyverse)
+library(ggplot2)
+library(scales) 
+```
+
+```{r load dataset}
+file_address_price = 'Daily Prices_ICCO.csv'
+price_data = read.csv(file_address_price)
+file_address_weather = 'Ghana_data.csv'
+weather_data = read.csv(file_address_weather)
+```
+
+```{r price data cleaning}
+# time ascending order
+price_data <- price_data %>%
+  mutate(Date = as.Date(Date, format="%d/%m/%Y")) %>%  # Convert to Date format
+  arrange(Date)  # Sort in ascending order
+
+# monthly average price
+price_data <- price_data %>%
+  mutate(Date = as.Date(Date),  # Ensure Date column is in Date format
+         YearMonth = floor_date(Date, "month")) %>%  # Extract Year-Month
+  group_by(YearMonth) %>%  # Group by Year-Month
+  summarise(Monthly_Avg_Price = mean(as.numeric(gsub(",", "", `ICCO.daily.price..US..tonne.`)), na.rm = TRUE)) %>% 
+  ungroup()
+```
+
+```{r dataset splitting}
+# Determine the number of rows
+n <- nrow(price_data)
+
+# Split dataset
+train_data <- price_data[1:(n - 3), ]
+test_data <- price_data[(n - 2):n, ]
+head(test_data)
+
+# convert train and test data into ts
+full_ts = ts(price_data$Monthly_Avg_Price, start = c(1994, 10), frequency = 12)
+train_ts = ts(train_data$Monthly_Avg_Price, start = c(1994, 10), frequency = 12)
+test_ts = ts(test_data$Monthly_Avg_Price, start = c(2024, 12), frequency = 12)
+
+# plot of train and test set
+#plot(train_data$Monthly_Avg_Price)
+#plot(test_data$Monthly_Avg_Price)
+
+# change Language output
+Sys.setlocale("LC_TIME", "C")  
+```
+
+```{r PLOT}
+# convert
+train_time_p1 = seq(from = as.Date("1994-10-01"), by = "month", length.out = length(train_ts))
+test_time_p1 = seq(from = as.Date("2024-12-01"), by = "month", length.out = length(test_ts))
+full_ts_p1 = seq(from = as.Date("1994-10-01"), by = "month", length.out = length(full_ts))
+
+# Plot original data
+plot(full_ts_p1, full_ts, type = "l", xlab = "Time", ylab = "Monthly Average Price", 
+     main = "Time Series", col = "#005CAF", lwd = 2)
+
+# Plot train data
+plot(train_time_p1, train_ts, type = "l", xlab = "Time", ylab = "Monthly Average Price", 
+     main = "Time Series Train data", col = "#D05A6E", lwd = 2)
+
+# Plot test
+plot(test_time_p1, test_ts, type = "l", xlab = "Time", ylab = "Monthly Average Price", 
+     main = "Time Series Test data", col = "#6A4C9C", lwd = 2)
+```
+
+# ETS
+```{r ets, rmse = 2248.278, include = FALSE}
+# fit ets model
+ets_model <- ets(train_ts, model = "AAA")
+
+# forecast
+ets_forecast <- forecast(ets_model, h = 3)
+accuracy(ets_forecast, test_ts)["Test set", "RMSE"]
+print(ets_forecast)
+
+# plot
+plot(ets_forecast, main = "ETS Forecast vs. Test Data")
+lines(test_ts, col = "red", lwd = 2)
+legend("topleft", legend = c("Forecast", "Actual Data"), 
+       col = c("blue", "red"), lwd = 2)
+```
+
+
+# SARIMA
+```{r log, choose model visually}
+adf.test(train_ts)
+# NEW: LOG
+new_train_ts = log(train_ts)
+log_ts_1 = seq(from = as.Date("1994-10-01"), by = "month", length.out = length(new_train_ts))
+adf.test(new_train_ts)
+
+# plot before diff
+plot(log_ts_1, new_train_ts, type = "l", xlab = "Time", ylab = "log Monthly Average Price", 
+     main = "Train data Time Series", col = "#ED784A", lwd = 2)
+adf.test(log_ts_1)
+#acf(new_train_ts, main = "Autocorrelation Function", xlab = "Lag", ylab = "ACF", lag.max = 100)
+#pacf(new_train_ts, main = "Partial Autocorrelation Function", xlab = "Lag", ylab = "PACF", lag.max = 100)
+```
+
+```{r diff, choose model visually}
+# plot after diff
+diff_1 = diff(new_train_ts)
+#diff_2 = diff(diff_1, 12)
+plot(diff_1, type = "l", col = "#255359", lwd = 2, main = "First Differencing",
+     xlab = "Time", ylab = "Difference")
+
+
+plot.ts(cbind(train_ts,new_train_ts,diff_1), main="")
+
+acf2(diff_1, max.lag = 85, main = "ACF and PACF of differenced series")
+
+
+
+acf(diff_1, main = "Autocorrelation Function", xlab = "Lag÷12", ylab = "ACF", lag.max=85)
+pacf(diff_1, main = "Partial Autocorrelation Function", 
+     xlab = "Lag÷12", ylab = "PACF", lag.max=85)
+```
+```{r}
+# PLOT
+par(mfrow = c(3,1), mar = c(3, 4, 2, 2))
+# original
+plot(train_ts, type = "l", lwd = 2, xlab = "Time", ylab = "Monthly Average Price", main = "Time Series of Training Data", col = "#D05A6E", cex.main = 1.5)
+
+
+plot(new_train_ts, type = "l", col = "#ED784A", lwd = 2, xlab = "Time", ylab = "log Monthly Average Price")
+
+# diff
+plot(diff_1, type = "l", col = "#554236", lwd = 2, xlab = "Time", ylab = "Difference")
+par(mfrow = c(1,1))
+```
+
+
+
+```{r}
+# auto select according to AIC
+#AUTO_select <- auto.arima(new_train_ts, seasonal = TRUE, stepwise = FALSE, approximation = FALSE, trace = TRUE)
+
+trace_output <- capture.output(auto.arima(new_train_ts, seasonal = TRUE, stepwise = FALSE, approximation = FALSE, trace = TRUE))
+
+# Extract lines containing model information
+model_lines <- trace_output[str_detect(trace_output, "^ ARIMA")]
+```
+
+```{r}
+# Initialize vectors to store models and AIC values
+models <- c()
+aic_values <- c()
+
+# Loop through each line to extract information
+for (line in model_lines) {
+  # Split the line into parts
+  parts <- strsplit(line, ":")[[1]]
+  model_info <- trimws(parts[1])
+  aic_value <- as.numeric(trimws(parts[2]))
+
+  # Store the extracted information
+  models <- c(models, model_info)
+  aic_values <- c(aic_values, aic_value)
+}
+
+# Create a data frame
+model_aic_df <- data.frame(Model = models, AIC = aic_values)
+sorted_model_aic_df <- model_aic_df[order(model_aic_df$AIC), ]
+
+# top 5 models
+head(sorted_model_aic_df, 20)
+```
+
+```{r }
+# sarima model 1
+mod_1 <- Arima(new_train_ts, order = c(1,1,1), seasonal = list(order = c(0,0,0), period = 12))
+sarima(new_train_ts,1,1,1,0,0,0,12)
+
+# Forecast 3 obs
+forecast_1 <- forecast(mod_1, h = 3)
+
+# exp
+output_1 <- exp(forecast_1$mean)
+
+# RMSE
+rmse_value_1 <- accuracy(output_1, test_ts)["Test set", "RMSE"]
+print(rmse_value_1)
+```
+
+```{r }
+# sarima model 2
+mod_2 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(0,0,0), period = 12))
+sarima(new_train_ts,0,1,1,0,0,0,12)
+
+# Forecast 3 obs
+forecast_2 <- forecast(mod_2, h = 3)
+
+# exp
+output_2 <- exp(forecast_2$mean)
+
+# RMSE
+rmse_value_2 <- accuracy(output_2, test_ts)["Test set", "RMSE"]
+print(rmse_value_2)
+```
+
+```{r }
+# sarima model 3
+mod_3 <- Arima(new_train_ts, order = c(1,1,0), seasonal = list(order = c(0,0,0), period = 12))
+sarima(new_train_ts,1,1,0,0,0,0,12)
+
+# Forecast 3 obs
+forecast_3 <- forecast(mod_3, h = 3)
+
+# exp
+output_3 <- exp(forecast_3$mean)
+
+# RMSE
+rmse_value_3 <- accuracy(output_3, test_ts)["Test set", "RMSE"]
+print(rmse_value_3)
+```
+
+```{r }
+# sarima model 4
+mod_4 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(0,0,1), period = 12))
+sarima(new_train_ts,0,1,1,0,0,1,12)
+
+# Forecast 3 obs
+forecast_4 <- forecast(mod_4, h = 3)
+
+# exp
+output_4 <- exp(forecast_4$mean)
+
+# RMSE
+rmse_value_4 <- accuracy(output_4, test_ts)["Test set", "RMSE"]
+print(rmse_value_4)
+```
+```{r }
+# sarima model 5
+mod_5 <- Arima(new_train_ts, order = c(0,1,1), seasonal = list(order = c(1,0,0), period = 12))
+sarima(new_train_ts,0,1,1,1,0,0,12)
+
+# Forecast 3 obs
+forecast_5 <- forecast(mod_5, h = 3)
+
+# exp
+output_5 <- exp(forecast_5$mean)
+
+# RMSE
+rmse_value_5 <- accuracy(output_5, test_ts)["Test set", "RMSE"]
+print(rmse_value_5)
+```
+
+
+```{r sarima forecast}
+# forecast
+#forecast_sarima <- forecast(mod_3, h = 12)
+
+logPrice = log(full_ts)
+#sari ma.for(logPrice,12, 1,1,0,0,0,0,12)
+sarima.for(logPrice,6, 1,1,0,0,0,0,12)
+#autoplot(forecast_sarima) + labs(title = "Forecast with Confidence Intervals", x = "Time", y = "Predicted Price")
+```
+
+
+```{r sarima forecast}
+model_final = sarima(new_train_ts, p=1, d=1, q=0, P=0, D=0, Q=0, S=12)
+forecast_result = sarima.for(new_train_ts, n.ahead=3, 1,1,0,0,0,0,12)
+# log to natural
+predicted_log = forecast_result$pred
+predicted = exp(predicted_log) 
+
+all_predicted <- ts(c(train_ts, predicted), start = start(full_ts), frequency = frequency(full_ts))
+
+time_full <- time(full_ts)
+
+predicted_series <- ts(c(rep(NA, length(train_ts)), predicted), 
+                       start = start(full_ts), frequency = frequency(full_ts))
+
+plot_df <- data.frame(
+  Time = time_full,
+  Actual = as.numeric(full_ts),
+  Predicted = as.numeric(predicted_series)
+)
+
+plot_df$Predicted[362] = plot_df$Actual[362]
+
+
+# last 30
+plot_df_last50 <- tail(plot_df, 30)
+
+ggplot(plot_df_last50, aes(x = Time)) +
+  geom_line(aes(y = Actual), color = "black", size = 1.2) +
+  geom_line(aes(y = Predicted), color = "#DB4D6D", size = 1.2, na.rm = TRUE) +
+  labs(
+    title = "Actual vs Forecasted Prices (Last 30 Observations)",
+    x = "Time",
+    y = "Price"
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
